@@ -1,0 +1,33 @@
+name: Daily Habit ETL
+
+# Runs every day at 6:00 AM UTC 
+on:
+  schedule:
+    - cron: '0 6 * * *'  
+
+  # Manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run ETL Script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          DATABASE_ID: ${{ secrets.DATABASE_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python main.py
