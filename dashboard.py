@@ -8,8 +8,13 @@ import plotly.express as px
 st.set_page_config(page_title="Personal Analytics", layout="wide")
 st.title("📊 Personal Habits Dashboard")
 
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
+try:
+    # Try loading from Streamlit Cloud Secrets
+    DATABASE_URL = st.secrets["DATABASE_URL"]
+except (FileNotFoundError, KeyError):
+    # If running locally without secrets.toml, use .env
+    load_dotenv()
+    DATABASE_URL = os.getenv("DATABASE_URL")
 
 @st.cache_resource
 def get_db_connection():
