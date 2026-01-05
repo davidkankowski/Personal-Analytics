@@ -2,65 +2,89 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 import os
-from dotenv import load_dotenv
 import plotly.express as px
 
+# Page configuration
 st.set_page_config(page_title="Personal Analytics", layout="wide")
 st.title("📊 Personal Habits Dashboard")
 
-# Debug method
-DATABASE_URL = None
-try:
-    # Try Cloud Secrets
+# Secure Connection Logic
+def get_db_connection():
+    # Try Cloud Secrets first, then local .env
     if "DATABASE_URL" in st.secrets:
-        DATABASE_URL = st.secrets["DATABASE_URL"]
-        st.success("Found credentials in Streamlit Cloud Secrets!")
+        db_url = st.secrets["DATABASE_URL"]
     else:
-        # Try Local .env
+        from dotenv import load_dotenv
         load_dotenv()
-        DATABASE_URL = os.getenv("DATABASE_URL")
-        if DATABASE_URL:
-            st.info("Found credentials in local .env file.")
-        else:
-            st.error("No credentials found in Secrets or .env.")
-except FileNotFoundError:
+        db_url = os.getenv("DATABASE_URL")
 
-    load_dotenv()
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    if DATABASE_URL:
-        st.info("Found credentials in local .env file (Local Mode).")
+    if not db_url:
+        return None
 
-if not DATABASE_URL:
-    st.stop()
+    # Force the correct driver for Streamlit
+    if "postgresql://" in db_url and "postgresql+psycopg2" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
 
-# Connection test
-try:
-    if "postgresql://" in DATABASE_URL and "postgresql+psycopg2" not in DATABASE_URL:
-        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://")
+    return create_engine(db_url, connect_args={"sslmode": "require"})
 
-    engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"})
-    
-    # Simple query to test connection
-    with engine.connect() as conn:
-        st.toast("Database Connection Successful!")
+# Load Data
+def load_data():
+    engine = get_db_connection()
+    if not engine:
+        st.error("Database URL not found.")
+        return pd.DataFrame()
         
+    try:
         query = """
-        SELECT d.date, h.habit_name, f.is_completed
+        SELECT 
+            d.date, 
+            d.day_name, 
+            h.habit_name, 
+            f.is_completed
         FROM fact_habits f
         JOIN dim_date d ON f.date_id = d.date_id
         JOIN dim_habit h ON f.habit_id = h.habit_id
         ORDER BY d.date DESC
-        LIMIT 100
         """
-        df = pd.read_sql(query, conn)
+        with engine.connect() as conn:
+            return pd.read_sql(query, conn)
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()
 
-except Exception as e:
-    st.error(f"💥 Connection Error: {e}")
-    st.stop()
+# Visualization
+df = load_data()
 
-# Display
 if not df.empty:
-    st.metric("Total Logs", len(df))
-    st.dataframe(df)
+    # Metrics
+    col1, col2, col3 = st.columns(3)
+    total_logs = len(df)
+    completion_rate = df['is_completed'].mean() * 100
+    
+    col1.metric("Total Logs", total_logs)
+    col2.metric("Completion Rate", f"{completion_rate:.1f}%")
+    col3.metric("Latest Log", str(df['date'].iloc[0]))
+    
+    # Charts
+    st.subheader("📅 Consistency Heatmap")
+    
+    # Clean Heatmap
+    fig = px.scatter(
+        df, 
+        x="date", 
+        y="habit_name", 
+        color="is_completed",
+        symbol="is_completed",
+        size_max=10,
+        color_discrete_map={True: "#00CC96", False: "#EF553B"},
+        title="Daily Habit Performance"
+    )
+    fig.update_layout(xaxis_title="Date", yaxis_title=None)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Data table
+    with st.expander("🔍 View Raw Data"):
+        st.dataframe(df)
+
 else:
-    st.warning("No data found in database.")
+    st.info("Waiting for data - Ensure your GitHub Action runs successfully")
