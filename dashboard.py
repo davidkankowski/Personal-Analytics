@@ -8,80 +8,59 @@ import plotly.express as px
 st.set_page_config(page_title="Personal Analytics", layout="wide")
 st.title("📊 Personal Habits Dashboard")
 
+# Debug method
+DATABASE_URL = None
 try:
-    # Try loading from Streamlit Cloud Secrets
-    DATABASE_URL = st.secrets["DATABASE_URL"]
-except (FileNotFoundError, KeyError):
-    # If running locally without secrets.toml, use .env
+    # Try Cloud Secrets
+    if "DATABASE_URL" in st.secrets:
+        DATABASE_URL = st.secrets["DATABASE_URL"]
+        st.success("Found credentials in Streamlit Cloud Secrets!")
+    else:
+        # Try Local .env
+        load_dotenv()
+        DATABASE_URL = os.getenv("DATABASE_URL")
+        if DATABASE_URL:
+            st.info("Found credentials in local .env file.")
+        else:
+            st.error("No credentials found in Secrets or .env.")
+except FileNotFoundError:
+
     load_dotenv()
     DATABASE_URL = os.getenv("DATABASE_URL")
+    if DATABASE_URL:
+        st.info("Found credentials in local .env file (Local Mode).")
 
-@st.cache_resource
-def get_db_connection():
-    if not DATABASE_URL:
-        st.error("Database URL not found. Check your .env file.")
-        return None
-    try:
-        engine = create_engine(
-            DATABASE_URL,
-            pool_pre_ping=True,
-            connect_args={"sslmode": "require"}
-        )
-        return engine
-    except Exception as e:
-        st.error(f"Connection failed: {e}")
-        return None
+if not DATABASE_URL:
+    st.stop()
 
-def load_data():
-    engine = get_db_connection()
-    if engine:
-        # Joining tables to get readable names instead of IDs
+# Connection test
+try:
+    if "postgresql://" in DATABASE_URL and "postgresql+psycopg2" not in DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://")
+
+    engine = create_engine(DATABASE_URL, connect_args={"sslmode": "require"})
+    
+    # Simple query to test connection
+    with engine.connect() as conn:
+        st.toast("Database Connection Successful!")
+        
         query = """
-        SELECT 
-            d.date, 
-            d.day_name, 
-            d.is_weekend,
-            h.habit_name, 
-            f.status, 
-            f.is_completed
+        SELECT d.date, h.habit_name, f.is_completed
         FROM fact_habits f
         JOIN dim_date d ON f.date_id = d.date_id
         JOIN dim_habit h ON f.habit_id = h.habit_id
         ORDER BY d.date DESC
+        LIMIT 100
         """
-        df = pd.read_sql(query, engine)
-        return df
-    return pd.DataFrame()
+        df = pd.read_sql(query, conn)
 
-df = load_data()
+except Exception as e:
+    st.error(f"💥 Connection Error: {e}")
+    st.stop()
 
+# Display
 if not df.empty:
-    # --- METRICS ROW ---
-    col1, col2, col3 = st.columns(3)
-    total_logs = len(df)
-    completion_rate = df['is_completed'].mean() * 100
-    
-    col1.metric("Total Logs", total_logs)
-    col2.metric("Completion Rate", f"{completion_rate:.1f}%")
-    
-    # --- CHARTS ---
-    st.subheader("📅 Consistency Over Time")
-    
-    # Simple Heatmap approximation using Scatter
-    fig = px.scatter(
-        df, 
-        x="date", 
-        y="habit_name", 
-        color="is_completed",
-        symbol="is_completed",
-        title="Habit Streak View",
-        color_discrete_map={True: "green", False: "red"}
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- DATA TABLE ---
-    with st.expander("🔍 View Raw Data"):
-        st.dataframe(df)
-
+    st.metric("Total Logs", len(df))
+    st.dataframe(df)
 else:
-    st.warning("Error: No data found.")
+    st.warning("No data found in database.")
